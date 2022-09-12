@@ -1,0 +1,294 @@
+---
+title: "Assessment 2"
+author: "Kaitlin Haines"
+student id: '57998970'
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(corrplot)
+library(tidyverse)  
+library(glmnet)
+library(caret)
+require(gridExtra)
+library(MASS)
+library(tictoc)
+library(leaps)
+library(boot)
+
+```
+
+```{r load Residen, include=FALSE}
+load("Residen.RData")
+```
+# **Question 1 (a)**
+
+
+```{r echo=TRUE}
+
+#correlation matrix, onl using upper triangle [so values are not duplicated] with significance levels < 0.999 appearing as blank
+news <- corrplot(cor(Residen), diag = FALSE, order = "FPC",
+         tl.pos = "td", tl.cex = .4, method = "color", type = "upper", sig.level = 0.9999, insig = "blank")
+```
+
+The five parameters most correlated with sales price [V104] are V8 [unit price per m^2^], V5 [estimated construction cost], V80 [CPI in base year], V99 [CPI in base year], and V100 [housing, water fuel CPI]. There is a moderate-to-strong, positive, linear correlation between actual sales price and each of these variables. From this, it can be said that there is some relationship between construction costs and sales price. Of course, overall construction costs are also influenced by the official exchange rate, as if it costs more to source resources to build, this drives up the construction costs, and hence the price per m^2^.
+Of course, overall construction costs are also influenced by consumer CPI, as CPI in a broad sense influences inflation and other economic factors. As the CPI is broadly a cost of living index, monitoring the prices of items purchased by households, and thus inflation. With high inflation, it would cost more to source resources, driving up construction costs, and hence unit price per m^2^ of any house built - a perfectly positive linear relationship.
+Thus, it makes sense for these parameters to be highly correlated with this particular response variable.
+It can also be observed that almost all variables are negatively correlated with the mortgage interest rate in a quarter [variables of V18 V37, V56, V75 and V94, respectively]. At a base level, as interest rates increase, actual sales price decreases, with the same phenomenon observed when comparing any other predictor.
+
+# **Question 1 (b)**
+
+
+```{r echo=TRUE}
+#ensures reproducable outputs
+set.seed(1)
+#colMeans(Residen)
+#70:30 split for training and test
+split <- sample(1:nrow(Residen), 0.7*nrow(Residen))
+Residen_excl_V105 <- subset(Residen,select=-c(V105))
+training = Residen_excl_V105[split,]
+test = Residen_excl_V105[-split,]
+
+#Adjusted R2 is 0.99 [2 significant figures] or 99% of the variation is explained by the model. This is no surprise due to the sheer number of correlated variables
+#Response will not deviate from predicted line of best fit,
+#due to low residual standard error. This is because to the model accounting for / building in much of the variance and complexity. Thus. not much randomness 
+
+model_full = lm(V104~., data=Residen_excl_V105)
+summary(model_full)
+par(mfrow=c(2,2))
+
+#plotting residuals, qq plot etc, to better investigate model
+plot(model_full)
+#coef(model1)
+
+#plot1 = ggplot(train, aes(V8, residuals(model1))) + geom_point() + geom_smooth()
+#plot2=ggplot(train, aes(V5, residuals(model1))) + geom_point() + geom_smooth()
+#plot3=ggplot(train, aes(V80, residuals(model1))) + geom_point() + geom_smooth()
+#plot4=ggplot(train, aes(V100, residuals(model1))) + geom_point() + geom_smooth()
+
+#grid.arrange(plot1,plot3,plot4)
+
+#plot(Residen$V104,Residen$V8)
+#abline(lm(Residen$V8~Residen$V104),col="red")
+
+             
+predictions <- predict(model_full, newdata = test)
+```
+
+It is apparent that multiple 'NA' variables indicate the presence of multicolinearity in this full model, despite excluding V105 [start date]. This makes sense, as many included variables differ only due to time lags; therefore, those variables will be correlated with one another. The adjusted R^2^ [where adjusted is preferable here, due to the large number of parameters in the full model] is 0.994. Even adjusting for the large amount of extraneous parameters present in the model, the model still explains 99.4% of the variance within the model. As a result of a large R^2^, the model is likely overfitting the training data and may not generalise well.
+The residual standard error of the model is 86. Thus, on average, the predicted and observed values will differ by 86. This is rather high, and also goes somewhat hand in hand with the R^2^, Where the model is trying to account for too much of the noise of the training data. Thus, any given coefficient cannot necessarily be predicted with a high degree of accuracy; and the quality of the model fit can likely be improved.
+Looking to the F-statistic, it is over 300. As the associated p-value is very small, with the F-statistic very large, the likelihood of the given model not explaining at least some of the data is low. Thus, the model successfully explains some of the data. As the model successfully explains some of data, it can be said that there is a statistically significant linear association between house prices and the unrestricted set of parameters.
+it would also appear there is only one significant coefficient at p = 0.05, V1.
+
+# **Question 1 (c)**
+```{r echo=TRUE}
+#model with no predictors other than y-intercept
+model_null = lm(V104~1, data=training)
+#full model [excluding V105]
+model_full = lm(V104~., data=training)
+
+#STEPWISE SELECTION
+#timing the execution of stepwise selection
+tic("stepwise")
+model6 <- stepAIC(model_null, direction="both",scope=list(upper=model_full,lower=model_null),trace=FALSE)
+summary(model6)
+toc()
+#model6$anova # display results 
+
+
+#BACKWARD SELECTION
+tic("backward")
+model20 <- stepAIC(model_full, direction="backward",scope=list(upper=model_full),trace=FALSE)
+summary(model20)
+toc()
+#model20$anova # display results 
+
+#predictions, RMSE and variance on test data
+predictions_test <- predict(model20,newdata= test)
+RMSE(predictions_test, test$V104)
+var(predictions_test)
+
+#predictions, RMSE and variance on test data
+predictions_test <- predict(model6,newdata= test)
+RMSE(predictions_test, test$V104)
+var(predictions_test)
+```
+
+> Computation time. 
+
+Initially, I suspected backwards selection to have the shortest computing time; from a naive point of view. Infact, stepwise selection actually had the shortest computation time by over half - 1.03 seconds [stepwise] versus 10.12 [backwards]. A contributing factor to this, would be backwards selection beginning with 103 predictors [in other words, the full model], verses 0 predictors [null model]. This difference in initially considered predictors would be the main driver behind differences between computation time. From this it is obvious that, where backwards selection can consider all combinations of possible parameters, stepwise, by design, does not and can not do this. Thus, stepwise will constantly computationally outperform backwards selection in this instanance. However, as a consequence, stepwise is not guaranteed to select the optimal parameters. 
+
+As stepwise selection does not consider all combinations of possible parameters, it will constantly computationally outperform backwards selection, where all combinations cannot help but be considered.
+
+> Model outputs
+
+The most immediately noticeable item returned by the summary table is the fact that the stepwise model has a reduced number of parameters. This is because, as above, stepwise selection does not consider all combinations of possible parameters. Thus, the model will be restricted to a model with fewer parameters both before any computation begins, and during.
+On the other hand, one advantage of backwards selection is that it can still include variables that are correlated to other variables within the already reduced model. Thus, backwards selection can better handle multicolinearity. As above, multicolinearity is most likely present here, as the final parsimonious model has an increased number of predictors in comparison to stepwise selection. At a p value of 0.05, all predictors in the model other than V41 and V15 are significant. However, backwards selection includes far more predictors that are not statistically significant at p = 0.05. This likely indicates colinearity between significant and non-significant predictors.
+There are a number of overlapping predictors across both variables.
+
+> Holdout mean square error
+
+Turning to an initial inspection of MSE, the stepwise model has a slightly higher MSE at 84.2, compared to 82.5 with backwards selection.
+In the same vein, The RMSE for the stepwise model is 322, versus an RMSE of 275 for backwards selection. of course, the smaller the RMSE, the smaller the difference between the observed and predicted values. As backwards selection produces a smaller RMSE, the difference between observed and predicted values will not be as large as with the stepwise model.
+Hence, backwards selection more accurately predicts the response; meaning the line of best fit for the model will be more in line with the observed values. As a consequence, coefficients will be able to be estimated far more accurately, with smaller standard error, and hence smaller confidence intervals. All this to say that the predictive capability of backwards selection is better.
+
+Thus, the line of best fit for the stepwise regression model will not deviate from the observed values as much as for backwards selection.  Somewhat expectedly, the backwards selection model RSE is nearer   to the full model above. 
+
+> Variance
+
+Expectedly, to go alongside a lower RMSE, backwards selection produces significantly lower variance than stepwise selection.
+
+# **Question 1 (d)**
+```{r echo=TRUE}
+
+#ridge
+
+set.seed(100) 
+
+split = sample(1:nrow(Residen), 0.7*nrow(Residen)) 
+Residen2 <- subset(Residen,select=-c(V105))
+train = Residen2[split,]
+test = Residen2[-split,]
+
+#training data
+x <- model.matrix(V104~., train)
+y <- train$V104
+lambdas <- 10^seq(10,-2,length=103)
+set.seed(100) 
+
+tic("ridge")
+cv <- cv.glmnet(x, y, alpha = 0)
+plot(cv$glmnet.fit, "lambda", label=TRUE)
+# Display the best lambda value
+cv$lambda.min
+ridge_reg = glmnet(x, y, alpha = 0, lambda = cv$lambda.min)
+plot(ridge_reg) 
+toc()
+
+plot(cv$cvm)
+min(cv$cvm)
+
+min(cv$cvsd)
+
+x.test <- model.matrix(V104 ~., test)#[,-1]
+predictions <- ridge_reg %>% predict(x.test) %>% as.vector()
+predictions_test <- predict(ridge_reg, s = cv$lambda.min,newx= x.test)
+
+predictions_train <- predict(ridge_reg, s = cv$lambda.min,newx= x)
+
+RMSE = RMSE(predictions_test, test$V104)
+Rsquare = R2(predictions_test, test$V104)
+
+#predicted - true
+SSE <- sum((predictions_test - test$V104)^2)
+#true
+SST <- sum((test$V104 - mean(test$V104))^2)
+R_square <- 1 - (SSE / SST)
+RMSE = sqrt(SSE/nrow(test))
+MSE = SSE/nrow(test)
+R_square
+RMSE
+var(predictions_test)
+dim(coef(ridge_reg))
+
+
+
+
+#LASSO
+#RMSE higher
+#Variation lower - makes sense, lasso aims to reduce variation
+
+set.seed(100) 
+
+index = sample(1:nrow(Residen), 0.7*nrow(Residen)) 
+Residen2 <- subset(Residen,select=-c(V105))
+
+train = Residen2[index,] # Create the training data 
+test = Residen2[-index,] # Create the test data
+# Predictor variables
+
+x <- model.matrix(V104~., train)#[,-1]
+# Outcome variable
+y <- train$V104
+lambdas <- 10^seq(10,-2,length=103)
+set.seed(100) 
+tic("LASSO")
+
+cv <- cv.glmnet(x, y, alpha = 1)
+plot(cv$glmnet.fit, "lambda", label=TRUE)
+# Display the best lambda value
+cv$lambda.min
+lasso_reg = glmnet(x, y, alpha = 1, lambda = cv$lambda.min)
+toc()
+plot(lasso_reg) 
+
+
+plot(cv$cvm)
+min(cv$cvm)
+
+min(cv$cvsd)
+
+
+x.test <- model.matrix(V104 ~., test)#[,-1]
+predictions <- ridge_reg %>% predict(x.test) %>% as.vector()
+predictions_test <- predict(lasso_reg, s = cv$lambda.min,newx= x.test)
+
+predictions_train <- predict(lasso_reg, s = cv$lambda.min,newx= x)
+
+probabilities <- ridge_reg %>% predict(newx = x.test)
+
+RMSE = RMSE(predictions_test, test$V104)
+Rsquare = R2(predictions_test, test$V104)
+
+#predicted - true
+SSE <- sum((predictions_test - test$V104)^2)
+#true
+SST <- sum((test$V104 - mean(test$V104))^2)
+R_square <- 1 - (SSE / SST)
+RMSE = sqrt(SSE/nrow(test))
+R_square
+RMSE
+var(predictions_test)
+```
+
+At a very high level, LASSO results in a higher variance, with a higher R2. 
+
+```{r echo=TRUE}
+
+
+
+
+#coef(ridge_reg)
+
+#coef(lasso_reg)
+
+```
+> Computation time. 
+
+The computation time for Ridge regression was 0.3 seconds. In comparison, the elapsed time for LASSO was 0.19 seconds - almost half the time. Much like backwards selection, ridge regression considers the full model, where all coefficients are shrunk to as small a value as necessary, but never exactly 0. LASSO, in combination with coefficient shrinkage, also carries out variable selection. Thus, it can be surmised that LASSO will always computationally outperform ridge as it carries out both L1 and L2 regularisation.
+Hence, LASSO can be comparable to stepwise selection, with ridge comparable to backwards selection.
+
+> Cross validation error
+
+The minimum mean cross-validated error for LASSO is 27761.5 . For ridge it is 51814.4. The cross validation mean square error 
+
+> RMSE
+
+The MSE for LASSO is 221.6. For ridge it is 292. Here, LASSO is better than ridge at predicting the response, based on the variables comprising the final model. The line of bets LASSO will 
+
+> Variance
+
+The variance across both methods is a somewhat unexpected result. Ridge produced an overall variance of 1422629, where for LASSO the result was 162854. Typically, LASSO is expected to produce a lower variance, and it is observed that is not the case here.
+
+As an aside, inspecting the coefficients between ridge and LASSO regression confirms that, where ridge simply shrinks the coefficients, LASSO has eliminated a number of colinear coefficients, reducing the complexity of the model.
+
+> Summary
+
+LASSO can be typically considered to be superior to ridge. This is because, where ridge and LASSO both carry out variable shrinkage, LASSO also carries out variable selection; generally resulting in a better fitting model. In this particular situation, LASSO can be said to have successfully found a model to return a smaller test RMSE / CV MSE than ridge. However, the variance of LASSO is higher than ridge.
+
+Ridge regression, much like backwards selection, successfully prevents overfitting, but the given parsimonious model has more variables and is more complicated that LASSO. LASSO results in a model with fewer variables, with a lower RMSE and cross validation MSE, but overall, a higher variance.
+
+In this case, ridge is somewhat better than LASSO, simply due to the number of colinear variables and presence of multicolinearity, which variable selection may not necessarily successfully 
